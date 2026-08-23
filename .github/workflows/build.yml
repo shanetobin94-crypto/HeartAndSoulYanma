@@ -8,153 +8,169 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout our repository
+      - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Check repository files
-        run: |
-          echo "Current directory:"
-          pwd
-          echo "Repository files:"
-          ls -la "$GITHUB_WORKSPACE"
 
       - name: Download Heart & Soul 2.0.0
         run: |
-          curl -L --fail -o source.zip https://github.com/PokemonHnS-Development/pokehns-expansion/archive/refs/tags/Release-v2.0.0.zip
+          curl -L --fail -o source.zip \
+            https://github.com/PokemonHnS-Development/pokehns-expansion/archive/refs/tags/Release-v2.0.0.zip
+
           unzip -q source.zip
           mv pokehns-expansion-Release-v2.0.0 source
 
       - name: Apply our custom patch
         run: |
-          echo "Checking for custom patch..."
+          echo "Applying Yanma patch..."
           ls -lh "$GITHUB_WORKSPACE/HnS_2.0_Custom_Pokemon_Source_Patch.zip"
-          unzip -oq "$GITHUB_WORKSPACE/HnS_2.0_Custom_Pokemon_Source_Patch.zip" -d "$GITHUB_WORKSPACE/source"
-          echo "Custom patch applied successfully."
-          unzip -l "$GITHUB_WORKSPACE/HnS_2.0_Custom_Pokemon_Source_Patch.zip"
 
-      - name: Repair incompatible Butterfree Frost entry
+          unzip -oq \
+            "$GITHUB_WORKSPACE/HnS_2.0_Custom_Pokemon_Source_Patch.zip" \
+            -d "$GITHUB_WORKSPACE/source"
+
+          echo "Patch applied."
+
+      - name: Repair Butterfree Frost entry
         run: |
-          python3 - <<'PY'
+          python3 <<'PY'
           from pathlib import Path
-          import re
 
           path = Path("source/src/data/pokemon/species_info.h")
           text = path.read_text()
 
-          frost = re.search(
-              r'(?m)^\s*\[SPECIES_BUTTERFREE_FROST\]\s*=\s*\{',
-              text
-          )
+          frost_marker = "[SPECIES_BUTTERFREE_FROST]"
+          normal_marker = "[SPECIES_BUTTERFREE]"
 
-          normal = re.search(
-              r'(?m)^\s*\[SPECIES_BUTTERFREE\]\s*=\s*\{',
-              text
-          )
+          frost_pos = text.find(frost_marker)
+          normal_pos = text.find(normal_marker)
 
-          if frost and normal:
+          print("Butterfree Frost position:", frost_pos)
+          print("Butterfree position:", normal_pos)
 
-              def block_end(s, brace_start):
+          if frost_pos == -1:
+              print("No Butterfree Frost entry found. Nothing to repair.")
+          elif normal_pos == -1:
+              raise SystemExit("ERROR: Normal Butterfree entry not found.")
+          else:
+
+              # Find the opening brace belonging to the entry.
+              frost_start = text.rfind("\n", 0, frost_pos) + 1
+              normal_start = text.rfind("\n", 0, normal_pos) + 1
+
+              def find_opening_brace(s, start):
+                  pos = s.find("{", start)
+                  if pos == -1:
+                      raise RuntimeError("Opening brace not found")
+                  return pos
+
+              def find_block_end(s, brace):
                   depth = 0
+                  in_string = False
+                  escape = False
 
-                  for i in range(brace_start, len(s)):
-                      if s[i] == '{':
+                  for i in range(brace, len(s)):
+                      c = s[i]
+
+                      if in_string:
+                          if escape:
+                              escape = False
+                          elif c == "\\":
+                              escape = True
+                          elif c == '"':
+                              in_string = False
+                          continue
+
+                      if c == '"':
+                          in_string = True
+                          continue
+
+                      if c == "{":
                           depth += 1
-
-                      elif s[i] == '}':
+                      elif c == "}":
                           depth -= 1
 
                           if depth == 0:
-                              j = i + 1
+                              end = i + 1
 
-                              while j < len(s) and s[j] in ' \t':
-                                  j += 1
+                              while end < len(s) and s[end] in " \t":
+                                  end += 1
 
-                              if j < len(s) and s[j] == ',':
-                                  j += 1
+                              if end < len(s) and s[end] == ",":
+                                  end += 1
 
-                              if j < len(s) and s[j] == '\n':
-                                  j += 1
+                              if end < len(s) and s[end] == "\n":
+                                  end += 1
 
-                              return j
+                              return end
 
-                  raise RuntimeError(
-                      "Could not find end of species entry"
-                  )
+                  raise RuntimeError("Could not find end of species block")
 
-              normal_end = block_end(
-                  text,
-                  normal.end() - 1
-              )
+              frost_brace = find_opening_brace(text, frost_start)
+              normal_brace = find_opening_brace(text, normal_start)
 
-              normal_block = text[
-                  normal.start():normal_end
-              ]
+              frost_end = find_block_end(text, frost_brace)
+              normal_end = find_block_end(text, normal_brace)
 
-              frost_end = block_end(
-                  text,
-                  frost.end() - 1
-              )
+              normal_block = text[normal_start:normal_end]
 
-              frost_block = normal_block.replace(
-                  '[SPECIES_BUTTERFREE]',
-                  '[SPECIES_BUTTERFREE_FROST]',
+              # Turn the normal Butterfree entry into a Frost entry.
+              replacement = normal_block.replace(
+                  "[SPECIES_BUTTERFREE]",
+                  "[SPECIES_BUTTERFREE_FROST]",
                   1
               )
 
+              # Remove the malformed Frost entry and replace it
+              # with the clean Butterfree-based version.
               text = (
-                  text[:frost.start()]
-                  + frost_block
+                  text[:frost_start]
+                  + replacement
                   + text[frost_end:]
+              )
+
+              # Make sure the incompatible Frost learnset symbol
+              # cannot remain.
+              text = text.replace(
+                  "sButterfreeFrostLevelUpLearnset",
+                  "sButterfreeLevelUpLearnset"
               )
 
               path.write_text(text)
 
-              print(
-                  "Replaced malformed Butterfree Frost entry "
-                  "with base Butterfree entry."
-              )
+              print("Butterfree Frost entry repaired successfully.")
 
-          else:
-              print(
-                  "Butterfree Frost or base Butterfree entry "
-                  "not found; leaving source unchanged."
-              )
-
-          text = path.read_text()
-
-          text = text.replace(
-              'sButterfreeFrostLevelUpLearnset',
-              'sButterfreeLevelUpLearnset'
-          )
-
-          path.write_text(text)
-
-          print("Checked Butterfree Frost learnset symbol.")
           PY
 
-      - name: Inspect patched source
+      - name: Verify patched source
         run: |
-          echo "========================================"
-          echo "CHECKING PATCHED SPECIES INFO"
-          echo "========================================"
+          echo "======================================"
+          echo "VERIFYING YANMA PATCH"
+          echo "======================================"
 
           echo ""
-          echo "=== Yanma/custom entries ==="
-
-          grep -n -B8 -A30 -E \
-            'SPECIES_YANMA|sButterfreeFrostLevelUpLearnset|ANIM_FRAMES\(ANIMCMD_FRAME\(0, 5\)' \
+          echo "Yanma entries:"
+          grep -n -E "SPECIES_YANMA" \
             source/src/data/pokemon/species_info.h || true
 
           echo ""
-          echo "=== Species constants ==="
-
-          grep -n -B5 -A10 -E \
-            'YANMA|BUTTERFREE_FROST' \
+          echo "Yanma constants:"
+          grep -n -E "YANMA" \
             source/include/constants/species.h || true
+
+          echo ""
+          echo "Checking for broken Butterfree Frost symbol:"
+          if grep -n "sButterfreeFrostLevelUpLearnset" \
+            source/src/data/pokemon/species_info.h; then
+            echo "ERROR: Broken Frost learnset symbol still exists."
+            exit 1
+          else
+            echo "OK."
+          fi
 
       - name: Install GBA compiler
         run: |
           sudo apt-get update
+
           sudo apt-get install -y \
             binutils-arm-none-eabi \
             gcc-arm-none-eabi \
@@ -169,24 +185,35 @@ jobs:
         run: |
           make hns release -j$(nproc) -O
 
-      - name: Verify built ROM
+      - name: Find completed ROM
         run: |
-          echo "Looking for the completed ROM..."
+          echo "======================================"
+          echo "SEARCHING FOR GBA ROM"
+          echo "======================================"
 
           find source \
-            -maxdepth 2 \
             -type f \
-            -name '*.gba' \
+            -name "*.gba" \
             -print
 
-          test -f source/pokehns-release.gba
+      - name: Verify ROM exists
+        run: |
+          ROM=$(find source -type f -name "*.gba" | head -n 1)
+
+          if [ -z "$ROM" ]; then
+            echo "ERROR: No GBA ROM was produced."
+            exit 1
+          fi
 
           echo "ROM FOUND:"
-          ls -lh source/pokehns-release.gba
+          ls -lh "$ROM"
+
+          echo "ROM PATH:"
+          echo "$ROM"
 
       - name: Upload ROM
         uses: actions/upload-artifact@v4
         with:
           name: HeartAndSoulYanma
-          path: source/pokehns-release.gba
+          path: source/**/*.gba
           if-no-files-found: error
