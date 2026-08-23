@@ -28,7 +28,7 @@ jobs:
         run: |
           echo "Checking for custom patch..."
           ls -lh "$GITHUB_WORKSPACE/HnS_2.0_Custom_Pokemon_Source_Patch.zip"
-          unzip -q "$GITHUB_WORKSPACE/HnS_2.0_Custom_Pokemon_Source_Patch.zip" -d "$GITHUB_WORKSPACE/source"
+          unzip -oq "$GITHUB_WORKSPACE/HnS_2.0_Custom_Pokemon_Source_Patch.zip" -d "$GITHUB_WORKSPACE/source"
           echo "Custom patch applied successfully."
           unzip -l "$GITHUB_WORKSPACE/HnS_2.0_Custom_Pokemon_Source_Patch.zip"
 
