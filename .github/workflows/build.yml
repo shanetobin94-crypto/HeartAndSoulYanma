@@ -11,11 +11,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Check repository files
-        run: |
-          echo "Repository:"
-          ls -lah "$GITHUB_WORKSPACE"
-
       - name: Download Heart & Soul 2.0.0
         run: |
           curl -L --fail -o source.zip \
@@ -25,15 +20,32 @@ jobs:
 
       - name: Apply Yanma patch
         run: |
-          echo "Checking for Yanma patch..."
           test -f "$GITHUB_WORKSPACE/HnS_2.0_Custom_Pokemon_Source_Patch.zip"
-          ls -lh "$GITHUB_WORKSPACE/HnS_2.0_Custom_Pokemon_Source_Patch.zip"
-
           unzip -oq \
             "$GITHUB_WORKSPACE/HnS_2.0_Custom_Pokemon_Source_Patch.zip" \
             -d "$GITHUB_WORKSPACE/source"
 
-          echo "Yanma patch applied."
+      - name: Remove remaining Butterfree Frost dependency
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("source/src/data/pokemon/species_info.h")
+          text = path.read_text()
+
+          old = "sButterfreeFrostLevelUpLearnset"
+          new = "sButterfreeLevelUpLearnset"
+
+          count = text.count(old)
+
+          print(f"Found {count} Butterfree Frost learnset references.")
+
+          text = text.replace(old, new)
+
+          path.write_text(text)
+
+          print("Butterfree Frost learnset references replaced.")
+          PY
 
       - name: Fix custom Yanma learnsets
         run: |
@@ -44,51 +56,32 @@ jobs:
           path = Path("source/src/data/pokemon/species_info.h")
           text = path.read_text()
 
-          # Any custom Yanma form that does not have its own
-          # learnset definition will use the normal Yanma learnset.
-          #
-          # This includes:
-          #   sYanmaDemoiselleLevelUpLearnset
-          #   sYanmaBlueLevelUpLearnset
-          #   sYanmaWhateverLevelUpLearnset
-          #
-          # The important part is that the base Yanma learnset exists
-          # in Heart & Soul 2.0.0.
-
           pattern = r'sYanma[A-Za-z0-9_]+LevelUpLearnset'
 
-          replacements = sorted(set(re.findall(pattern, text)))
+          symbols = sorted(set(re.findall(pattern, text)))
 
-          for symbol in replacements:
+          for symbol in symbols:
               if symbol != "sYanmaLevelUpLearnset":
                   text = text.replace(
                       symbol,
                       "sYanmaLevelUpLearnset"
                   )
-                  print(f"Replaced {symbol} -> sYanmaLevelUpLearnset")
+                  print(
+                      f"Replaced {symbol} "
+                      f"-> sYanmaLevelUpLearnset"
+                  )
 
           path.write_text(text)
 
-          print("Yanma learnset repair complete.")
+          print("Yanma learnset references fixed.")
           PY
 
-      - name: Inspect Yanma entries
+      - name: Inspect final source
         run: |
-          echo "========================================"
-          echo "YANMA SPECIES ENTRIES"
-          echo "========================================"
-
-          grep -n -B5 -A35 \
-            -E 'SPECIES_YANMA|YANMA_DEMOISELLE|YANMA_BLUE|Yanma' \
-            source/src/data/pokemon/species_info.h || true
-
-          echo ""
-          echo "========================================"
-          echo "YANMA LEARNSET REFERENCES"
-          echo "========================================"
+          echo "=== Remaining problematic learnsets ==="
 
           grep -n \
-            -E 'sYanma.*LevelUpLearnset' \
+            -E 'sButterfreeFrostLevelUpLearnset|sYanma.*LevelUpLearnset' \
             source/src/data/pokemon/species_info.h || true
 
       - name: Install GBA compiler
@@ -110,7 +103,7 @@ jobs:
 
       - name: Find completed ROM
         run: |
-          echo "Searching for completed GBA ROM..."
+          echo "Searching for GBA ROM..."
 
           find "$GITHUB_WORKSPACE/source" \
             -type f \
