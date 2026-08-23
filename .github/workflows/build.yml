@@ -32,39 +32,69 @@ jobs:
           echo "Custom patch applied successfully."
           unzip -l "$GITHUB_WORKSPACE/HnS_2.0_Custom_Pokemon_Source_Patch.zip"
 
+      - name: Repair incompatible Butterfree Frost entry
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path("source/src/data/pokemon/species_info.h")
+          text = path.read_text()
+
+          frost = re.search(r'(?m)^\s*SPECIES_BUTTERFREE_FROST\s*=\s*\{', text)
+          normal = re.search(r'(?m)^\s*SPECIES_BUTTERFREE\s*=\s*\{', text)
+
+          if frost and normal:
+              def block_end(s, brace_start):
+                  depth = 0
+                  for i in range(brace_start, len(s)):
+                      if s[i] == '{':
+                          depth += 1
+                      elif s[i] == '}':
+                          depth -= 1
+                          if depth == 0:
+                              j = i + 1
+                              while j < len(s) and s[j] in ' \t':
+                                  j += 1
+                              if j < len(s) and s[j] == ',':
+                                  j += 1
+                              if j < len(s) and s[j] == '\n':
+                                  j += 1
+                              return j
+                  raise RuntimeError("Could not find end of species entry")
+
+              normal_end = block_end(text, normal.end() - 1)
+              normal_block = text[normal.start():normal_end]
+
+              frost_end = block_end(text, frost.end() - 1)
+
+              frost_block = normal_block.replace(
+                  '[SPECIES_BUTTERFREE]',
+                  '[SPECIES_BUTTERFREE_FROST]',
+                  1
+              )
+
+              text = text[:frost.start()] + frost_block + text[frost_end:]
+              path.write_text(text)
+
+              print("Replaced malformed Butterfree Frost entry with base Butterfree entry.")
+          else:
+              print("Butterfree Frost or base Butterfree entry not found; leaving source unchanged.")
+
+          text = path.read_text()
+          text = text.replace(
+              'sButterfreeFrostLevelUpLearnset',
+              'sButterfreeLevelUpLearnset'
+          )
+          path.write_text(text)
+
+          print("Checked Butterfree Frost learnset symbol.")
+          PY
+
       - name: Inspect patched source
         run: |
           echo "========================================"
           echo "CHECKING PATCHED SPECIES INFO"
           echo "========================================"
 
-          echo ""
-          echo "=== Yanma/custom entries ==="
-          grep -n -B8 -A30 -E 'SPECIES_YANMA|sButterfreeFrostLevelUpLearnset|ANIM_FRAMES\(ANIMCMD_FRAME\(0, 5\)' \
-            source/src/data/pokemon/species_info.h || true
-
-          echo ""
-          echo "=== Species constants ==="
-          grep -n -B5 -A10 -E 'YANMA|BUTTERFREE_FROST' \
-            source/include/constants/species.h || true
-
-          echo ""
-          echo "=== Patch contents ==="
-          unzip -l "$GITHUB_WORKSPACE/HnS_2.0_Custom_Pokemon_Source_Patch.zip"
-
-      - name: Install GBA compiler
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y binutils-arm-none-eabi gcc-arm-none-eabi libnewlib-arm-none-eabi libpng-dev python3
-
-      - name: Build Heart & Soul
-        working-directory: source
-        env:
-          GAME_VERSION: POKEMON_HNS
-        run: make hns release -j$(nproc) -O
-
-      - name: Upload ROM
-        uses: actions/upload-artifact@v4
-        with:
-          name: HeartAndSoulYanma
-          path: source/pokehns-release.gba
+         
