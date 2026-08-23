@@ -1,0 +1,219 @@
+name: Build Heart & Soul Yanma Route 30
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download clean Heart & Soul 2.0.0
+        run: |
+          curl -L --fail -o source.zip \
+            https://github.com/PokemonHnS-Development/pokehns-expansion/archive/refs/tags/Release-v2.0.0.zip
+          unzip -q source.zip
+          mv pokehns-expansion-Release-v2.0.0 source
+
+      - name: Configure Route 30 Yanma
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("source/src/data/wild_encounters.json")
+          data = json.loads(path.read_text())
+          replaced = 0
+
+          for group in data.get("wild_encounter_groups", []):
+              for encounter in group.get("encounters", []):
+                  if encounter.get("map") != "MAP_ROUTE30_HNS":
+                      continue
+                  land = encounter.get("land_mons")
+                  if not land:
+                      continue
+                  for mon in land.get("mons", []):
+                      if mon.get("species") == "SPECIES_WEEDLE":
+                          mon["species"] = "SPECIES_YANMA"
+                          replaced += 1
+
+          if replaced == 0:
+              raise SystemExit("ERROR: No Route 30 Weedle slots found.")
+
+          path.write_text(json.dumps(data, indent=2) + "\n")
+          print(f"Replaced {replaced} Route 30 Weedle slots with Yanma.")
+          PY
+
+      - name: Give Yanma Fly HM compatibility
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("source/src/data/pokemon/all_learnables.json")
+          data = json.loads(path.read_text())
+
+          if "YANMA" not in data:
+              raise SystemExit("ERROR: YANMA learnables entry not found.")
+
+          if "MOVE_FLY" not in data["YANMA"]:
+              data["YANMA"].append("MOVE_FLY")
+
+          path.write_text(json.dumps(data, indent=2) + "\n")
+          print("MOVE_FLY added to Yanma learnables.")
+          PY
+
+      - name: Improve Yanma stats
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path("source/src/data/pokemon/species_info/gen_2_families.h")
+          text = path.read_text()
+
+          match = re.search(
+              r"(\[SPECIES_YANMA\]\s*=\s*\{)(.*?)(?=\n\s*\},)",
+              text,
+              re.S,
+          )
+          if not match:
+              raise SystemExit("ERROR: Yanma species entry not found.")
+
+          block = match.group(2)
+          stats = {
+              "baseHP": 80,
+              "baseAttack": 90,
+              "baseDefense": 70,
+              "baseSpeed": 120,
+              "baseSpAttack": 100,
+              "baseSpDefense": 80,
+          }
+
+          for field, value in stats.items():
+              block, count = re.subn(
+                  rf"(\.\s*{field}\s*=\s*)\d+",
+                  rf"\g<1>{value}",
+                  block,
+                  count=1,
+              )
+              if count != 1:
+                  raise SystemExit(f"ERROR: Could not change {field}.")
+
+          text = text[:match.start(2)] + block + text[match.end(2):]
+          path.write_text(text)
+          print("Yanma stats: 80 HP / 90 ATK / 70 DEF / 120 SPE / 100 SPA / 80 SPD")
+          PY
+
+      - name: Create custom blue Yanma shiny palette
+        run: |
+          cat > source/graphics/pokemon/yanma/shiny.pal <<'PAL'
+          JASC-PAL
+          0100
+          16
+          248 248 248
+          192 240 248
+          128 216 248
+          224 248 248
+          64 184 240
+          16 112 200
+          32 72 160
+          16 16 16
+          24 96 184
+          72 176 248
+          32 104 152
+          96 224 248
+          48 152 216
+          136 240 248
+          104 120 128
+          72 72 80
+          PAL
+
+          cp source/graphics/pokemon/yanma/shiny.pal source/graphics/pokemon/yanma/shiny_gba.pal
+          cp source/graphics/pokemon/yanma/shiny.pal source/graphics/pokemon/yanma/overworld_shiny.pal
+
+      - name: Force Route 30 Yanma shiny and give Fly + Leech Life
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("source/src/wild_encounter.c")
+          text = path.read_text()
+
+          old = (
+              "    CreateMonWithIVs(&gEnemyParty[0], species, level, personality, "
+              "OTID_STRUCT_PLAYER_ID, USE_RANDOM_IVS);\n"
+              "    GiveMonInitialMoveset(&gEnemyParty[0]);"
+          )
+
+          new = (
+              "    CreateMonWithIVs(&gEnemyParty[0], species, level, personality, "
+              "OTID_STRUCT_PLAYER_ID, USE_RANDOM_IVS);\n"
+              "    GiveMonInitialMoveset(&gEnemyParty[0]);\n\n"
+              "    // Custom Route 30 Yanma: guaranteed shiny with Fly + Leech Life.\n"
+              "    if (species == SPECIES_YANMA\n"
+              "     && gSaveBlock1Ptr->location.mapGroup == MAP_GROUP(MAP_ROUTE30_HNS)\n"
+              "     && gSaveBlock1Ptr->location.mapNum == MAP_NUM(MAP_ROUTE30_HNS))\n"
+              "    {\n"
+              "        bool8 isShiny = TRUE;\n"
+              "        SetMonData(&gEnemyParty[0], MON_DATA_IS_SHINY, &isShiny);\n"
+              "        SetMonMoveSlot(&gEnemyParty[0], MOVE_FLY, 0);\n"
+              "        SetMonMoveSlot(&gEnemyParty[0], MOVE_LEECH_LIFE, 1);\n"
+              "    }"
+          )
+
+          if old not in text:
+              raise SystemExit("ERROR: CreateWildMon insertion point not found.")
+
+          path.write_text(text.replace(old, new, 1))
+          print("Custom Route 30 Yanma wild-mon logic installed.")
+          PY
+
+      - name: Verify custom source
+        run: |
+          echo "=== Yanma stats ==="
+          grep -n -A12 "SPECIES_YANMA" source/src/data/pokemon/species_info/gen_2_families.h | head -n 14
+
+          echo "=== Route 30 Yanma slots ==="
+          grep -n -A10 -B2 "MAP_ROUTE30_HNS" source/src/data/wild_encounters.json | grep -E "MAP_ROUTE30_HNS|SPECIES_YANMA|SPECIES_WEEDLE" | head -n 80
+
+          echo "=== Yanma Fly learnable ==="
+          grep -n -A100 '"YANMA"' source/src/data/pokemon/all_learnables.json | grep -E 'YANMA|MOVE_FLY' || true
+
+          echo "=== Custom wild code ==="
+          grep -n -A18 -B4 "Custom Route 30 Yanma" source/src/wild_encounter.c
+
+      - name: Install GBA compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y binutils-arm-none-eabi gcc-arm-none-eabi libnewlib-arm-none-eabi libpng-dev python3
+
+      - name: Build Heart & Soul
+        working-directory: source
+        env:
+          GAME_VERSION: POKEMON_HNS
+        run: |
+          make clean-teachables || true
+          make hns release -j$(nproc) -O
+
+      - name: Verify ROM exists
+        run: |
+          ROM=$(find "$GITHUB_WORKSPACE/source" -type f \( -name "*.gba" -o -name "*.GBA" \) | head -n 1)
+          if [ -z "$ROM" ]; then
+            echo "ERROR: No GBA ROM was produced."
+            exit 1
+          fi
+          echo "ROM FOUND: $ROM"
+          ls -lh "$ROM"
+
+      - name: Upload ROM
+        uses: actions/upload-artifact@v4
+        with:
+          name: HeartAndSoul-Yanma-Route30
+          path: |
+            source/**/*.gba
+            source/**/*.GBA
+          if-no-files-found: error
