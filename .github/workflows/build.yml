@@ -22,13 +22,14 @@ jobs:
       - name: Apply our custom patch
         run: |
           echo "Applying Yanma patch..."
+
           ls -lh "$GITHUB_WORKSPACE/HnS_2.0_Custom_Pokemon_Source_Patch.zip"
 
           unzip -oq \
             "$GITHUB_WORKSPACE/HnS_2.0_Custom_Pokemon_Source_Patch.zip" \
             -d "$GITHUB_WORKSPACE/source"
 
-          echo "Patch applied."
+          echo "Patch applied successfully."
 
       - name: Repair Butterfree Frost entry
         run: |
@@ -38,98 +39,76 @@ jobs:
           path = Path("source/src/data/pokemon/species_info.h")
           text = path.read_text()
 
-          frost_marker = "[SPECIES_BUTTERFREE_FROST]"
-          normal_marker = "[SPECIES_BUTTERFREE]"
+          marker = "[SPECIES_BUTTERFREE_FROST]"
+          pos = text.find(marker)
 
-          frost_pos = text.find(frost_marker)
-          normal_pos = text.find(normal_marker)
+          print("Butterfree Frost position:", pos)
 
-          print("Butterfree Frost position:", frost_pos)
-          print("Butterfree position:", normal_pos)
-
-          if frost_pos == -1:
-              print("No Butterfree Frost entry found. Nothing to repair.")
-          elif normal_pos == -1:
-              raise SystemExit("ERROR: Normal Butterfree entry not found.")
+          if pos == -1:
+              print("No Butterfree Frost entry found.")
           else:
 
-              # Find the opening brace belonging to the entry.
-              frost_start = text.rfind("\n", 0, frost_pos) + 1
-              normal_start = text.rfind("\n", 0, normal_pos) + 1
+              # Find the beginning of the species entry.
+              start = text.rfind("\n", 0, pos) + 1
 
-              def find_opening_brace(s, start):
-                  pos = s.find("{", start)
-                  if pos == -1:
-                      raise RuntimeError("Opening brace not found")
-                  return pos
+              # Find the opening { after the species marker.
+              brace = text.find("{", pos)
 
-              def find_block_end(s, brace):
-                  depth = 0
-                  in_string = False
-                  escape = False
+              if brace == -1:
+                  raise RuntimeError(
+                      "Could not find opening brace for Butterfree Frost entry."
+                  )
 
-                  for i in range(brace, len(s)):
-                      c = s[i]
+              # Find the matching closing brace.
+              depth = 0
+              in_string = False
+              escape = False
+              end = None
 
-                      if in_string:
-                          if escape:
-                              escape = False
-                          elif c == "\\":
-                              escape = True
-                          elif c == '"':
-                              in_string = False
-                          continue
+              for i in range(brace, len(text)):
+                  c = text[i]
 
-                      if c == '"':
-                          in_string = True
-                          continue
+                  if in_string:
+                      if escape:
+                          escape = False
+                      elif c == "\\":
+                          escape = True
+                      elif c == '"':
+                          in_string = False
+                      continue
 
-                      if c == "{":
-                          depth += 1
-                      elif c == "}":
-                          depth -= 1
+                  if c == '"':
+                      in_string = True
 
-                          if depth == 0:
-                              end = i + 1
+                  elif c == "{":
+                      depth += 1
 
-                              while end < len(s) and s[end] in " \t":
-                                  end += 1
+                  elif c == "}":
+                      depth -= 1
 
-                              if end < len(s) and s[end] == ",":
-                                  end += 1
+                      if depth == 0:
+                          end = i + 1
 
-                              if end < len(s) and s[end] == "\n":
-                                  end += 1
+                          while end < len(text) and text[end] in " \t":
+                              end += 1
 
-                              return end
+                          if end < len(text) and text[end] == ",":
+                              end += 1
 
-                  raise RuntimeError("Could not find end of species block")
+                          if end < len(text) and text[end] == "\n":
+                              end += 1
 
-              frost_brace = find_opening_brace(text, frost_start)
-              normal_brace = find_opening_brace(text, normal_start)
+                          break
 
-              frost_end = find_block_end(text, frost_brace)
-              normal_end = find_block_end(text, normal_brace)
+              if end is None:
+                  raise RuntimeError(
+                      "Could not find end of Butterfree Frost entry."
+                  )
 
-              normal_block = text[normal_start:normal_end]
+              # Remove ONLY the malformed Butterfree Frost entry.
+              text = text[:start] + text[end:]
 
-              # Turn the normal Butterfree entry into a Frost entry.
-              replacement = normal_block.replace(
-                  "[SPECIES_BUTTERFREE]",
-                  "[SPECIES_BUTTERFREE_FROST]",
-                  1
-              )
-
-              # Remove the malformed Frost entry and replace it
-              # with the clean Butterfree-based version.
-              text = (
-                  text[:frost_start]
-                  + replacement
-                  + text[frost_end:]
-              )
-
-              # Make sure the incompatible Frost learnset symbol
-              # cannot remain.
+              # Remove the incompatible Frost learnset reference if present.
               text = text.replace(
                   "sButterfreeFrostLevelUpLearnset",
                   "sButterfreeLevelUpLearnset"
@@ -137,7 +116,8 @@ jobs:
 
               path.write_text(text)
 
-              print("Butterfree Frost entry repaired successfully.")
+              print("Malformed Butterfree Frost entry removed.")
+              print("Yanma data has NOT been changed.")
 
           PY
 
@@ -148,7 +128,7 @@ jobs:
           echo "======================================"
 
           echo ""
-          echo "Yanma entries:"
+          echo "Yanma species entries:"
           grep -n -E "SPECIES_YANMA" \
             source/src/data/pokemon/species_info.h || true
 
@@ -158,7 +138,16 @@ jobs:
             source/include/constants/species.h || true
 
           echo ""
-          echo "Checking for broken Butterfree Frost symbol:"
+          echo "Checking Butterfree Frost:"
+          if grep -n "SPECIES_BUTTERFREE_FROST" \
+            source/src/data/pokemon/species_info.h; then
+            echo "WARNING: Butterfree Frost still appears in species_info.h"
+          else
+            echo "Butterfree Frost malformed entry is gone."
+          fi
+
+          echo ""
+          echo "Checking broken Frost learnset:"
           if grep -n "sButterfreeFrostLevelUpLearnset" \
             source/src/data/pokemon/species_info.h; then
             echo "ERROR: Broken Frost learnset symbol still exists."
@@ -205,9 +194,14 @@ jobs:
             exit 1
           fi
 
-          echo "ROM FOUND:"
+          echo ""
+          echo "======================================"
+          echo "ROM FOUND!"
+          echo "======================================"
+
           ls -lh "$ROM"
 
+          echo ""
           echo "ROM PATH:"
           echo "$ROM"
 
