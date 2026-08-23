@@ -8,8 +8,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout our repository
-  uses: actions/checkout@v4
+      - name: Checkout our repository
+        uses: actions/checkout@v4
+
       - name: Download Heart & Soul 2.0.0
         run: |
           curl -L --fail -o source.zip https://github.com/PokemonHnS-Development/pokehns-expansion/archive/refs/tags/Release-v2.0.0.zip
@@ -37,4 +38,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: HeartAndSoulYanma
-          path: source/pokehns-release.gba 
+          path: source/pokehns-release.gba
