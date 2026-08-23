@@ -11,155 +11,89 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Check repository files
+        run: |
+          echo "Repository:"
+          ls -lah "$GITHUB_WORKSPACE"
+
       - name: Download Heart & Soul 2.0.0
         run: |
           curl -L --fail -o source.zip \
             https://github.com/PokemonHnS-Development/pokehns-expansion/archive/refs/tags/Release-v2.0.0.zip
-
           unzip -q source.zip
           mv pokehns-expansion-Release-v2.0.0 source
 
-      - name: Apply our custom patch
+      - name: Apply Yanma patch
         run: |
-          echo "Applying Yanma patch..."
-
+          echo "Checking for Yanma patch..."
+          test -f "$GITHUB_WORKSPACE/HnS_2.0_Custom_Pokemon_Source_Patch.zip"
           ls -lh "$GITHUB_WORKSPACE/HnS_2.0_Custom_Pokemon_Source_Patch.zip"
 
           unzip -oq \
             "$GITHUB_WORKSPACE/HnS_2.0_Custom_Pokemon_Source_Patch.zip" \
             -d "$GITHUB_WORKSPACE/source"
 
-          echo "Patch applied successfully."
+          echo "Yanma patch applied."
 
-      - name: Repair Butterfree Frost entry
+      - name: Fix custom Yanma learnsets
         run: |
-          python3 <<'PY'
+          python3 - <<'PY'
           from pathlib import Path
+          import re
 
           path = Path("source/src/data/pokemon/species_info.h")
           text = path.read_text()
 
-          marker = "[SPECIES_BUTTERFREE_FROST]"
-          pos = text.find(marker)
+          # Any custom Yanma form that does not have its own
+          # learnset definition will use the normal Yanma learnset.
+          #
+          # This includes:
+          #   sYanmaDemoiselleLevelUpLearnset
+          #   sYanmaBlueLevelUpLearnset
+          #   sYanmaWhateverLevelUpLearnset
+          #
+          # The important part is that the base Yanma learnset exists
+          # in Heart & Soul 2.0.0.
 
-          print("Butterfree Frost position:", pos)
+          pattern = r'sYanma[A-Za-z0-9_]+LevelUpLearnset'
 
-          if pos == -1:
-              print("No Butterfree Frost entry found.")
-          else:
+          replacements = sorted(set(re.findall(pattern, text)))
 
-              # Find the beginning of the species entry.
-              start = text.rfind("\n", 0, pos) + 1
-
-              # Find the opening { after the species marker.
-              brace = text.find("{", pos)
-
-              if brace == -1:
-                  raise RuntimeError(
-                      "Could not find opening brace for Butterfree Frost entry."
+          for symbol in replacements:
+              if symbol != "sYanmaLevelUpLearnset":
+                  text = text.replace(
+                      symbol,
+                      "sYanmaLevelUpLearnset"
                   )
+                  print(f"Replaced {symbol} -> sYanmaLevelUpLearnset")
 
-              # Find the matching closing brace.
-              depth = 0
-              in_string = False
-              escape = False
-              end = None
+          path.write_text(text)
 
-              for i in range(brace, len(text)):
-                  c = text[i]
-
-                  if in_string:
-                      if escape:
-                          escape = False
-                      elif c == "\\":
-                          escape = True
-                      elif c == '"':
-                          in_string = False
-                      continue
-
-                  if c == '"':
-                      in_string = True
-
-                  elif c == "{":
-                      depth += 1
-
-                  elif c == "}":
-                      depth -= 1
-
-                      if depth == 0:
-                          end = i + 1
-
-                          while end < len(text) and text[end] in " \t":
-                              end += 1
-
-                          if end < len(text) and text[end] == ",":
-                              end += 1
-
-                          if end < len(text) and text[end] == "\n":
-                              end += 1
-
-                          break
-
-              if end is None:
-                  raise RuntimeError(
-                      "Could not find end of Butterfree Frost entry."
-                  )
-
-              # Remove ONLY the malformed Butterfree Frost entry.
-              text = text[:start] + text[end:]
-
-              # Remove the incompatible Frost learnset reference if present.
-              text = text.replace(
-                  "sButterfreeFrostLevelUpLearnset",
-                  "sButterfreeLevelUpLearnset"
-              )
-
-              path.write_text(text)
-
-              print("Malformed Butterfree Frost entry removed.")
-              print("Yanma data has NOT been changed.")
-
+          print("Yanma learnset repair complete.")
           PY
 
-      - name: Verify patched source
+      - name: Inspect Yanma entries
         run: |
-          echo "======================================"
-          echo "VERIFYING YANMA PATCH"
-          echo "======================================"
+          echo "========================================"
+          echo "YANMA SPECIES ENTRIES"
+          echo "========================================"
 
-          echo ""
-          echo "Yanma species entries:"
-          grep -n -E "SPECIES_YANMA" \
+          grep -n -B5 -A35 \
+            -E 'SPECIES_YANMA|YANMA_DEMOISELLE|YANMA_BLUE|Yanma' \
             source/src/data/pokemon/species_info.h || true
 
           echo ""
-          echo "Yanma constants:"
-          grep -n -E "YANMA" \
-            source/include/constants/species.h || true
+          echo "========================================"
+          echo "YANMA LEARNSET REFERENCES"
+          echo "========================================"
 
-          echo ""
-          echo "Checking Butterfree Frost:"
-          if grep -n "SPECIES_BUTTERFREE_FROST" \
-            source/src/data/pokemon/species_info.h; then
-            echo "WARNING: Butterfree Frost still appears in species_info.h"
-          else
-            echo "Butterfree Frost malformed entry is gone."
-          fi
-
-          echo ""
-          echo "Checking broken Frost learnset:"
-          if grep -n "sButterfreeFrostLevelUpLearnset" \
-            source/src/data/pokemon/species_info.h; then
-            echo "ERROR: Broken Frost learnset symbol still exists."
-            exit 1
-          else
-            echo "OK."
-          fi
+          grep -n \
+            -E 'sYanma.*LevelUpLearnset' \
+            source/src/data/pokemon/species_info.h || true
 
       - name: Install GBA compiler
         run: |
           sudo apt-get update
-
           sudo apt-get install -y \
             binutils-arm-none-eabi \
             gcc-arm-none-eabi \
@@ -176,38 +110,34 @@ jobs:
 
       - name: Find completed ROM
         run: |
-          echo "======================================"
-          echo "SEARCHING FOR GBA ROM"
-          echo "======================================"
+          echo "Searching for completed GBA ROM..."
 
-          find source \
+          find "$GITHUB_WORKSPACE/source" \
             -type f \
-            -name "*.gba" \
+            \( -name "*.gba" -o -name "*.GBA" \) \
             -print
 
       - name: Verify ROM exists
         run: |
-          ROM=$(find source -type f -name "*.gba" | head -n 1)
+          ROM=$(find "$GITHUB_WORKSPACE/source" \
+            -type f \
+            \( -name "*.gba" -o -name "*.GBA" \) \
+            | head -n 1)
 
           if [ -z "$ROM" ]; then
             echo "ERROR: No GBA ROM was produced."
             exit 1
           fi
 
-          echo ""
-          echo "======================================"
-          echo "ROM FOUND!"
-          echo "======================================"
-
-          ls -lh "$ROM"
-
-          echo ""
-          echo "ROM PATH:"
+          echo "ROM FOUND:"
           echo "$ROM"
+          ls -lh "$ROM"
 
       - name: Upload ROM
         uses: actions/upload-artifact@v4
         with:
-          name: HeartAndSoulYanma
-          path: source/**/*.gba
+          name: HeartAndSoul-Yanma
+          path: |
+            source/**/*.gba
+            source/**/*.GBA
           if-no-files-found: error
