@@ -32,6 +32,26 @@ jobs:
           echo "Custom patch applied successfully."
           unzip -l "$GITHUB_WORKSPACE/HnS_2.0_Custom_Pokemon_Source_Patch.zip"
 
+      - name: Inspect patched source
+        run: |
+          echo "========================================"
+          echo "CHECKING PATCHED SPECIES INFO"
+          echo "========================================"
+
+          echo ""
+          echo "=== Yanma/custom entries ==="
+          grep -n -B8 -A30 -E 'SPECIES_YANMA|sButterfreeFrostLevelUpLearnset|ANIM_FRAMES\(ANIMCMD_FRAME\(0, 5\)' \
+            source/src/data/pokemon/species_info.h || true
+
+          echo ""
+          echo "=== Species constants ==="
+          grep -n -B5 -A10 -E 'YANMA|BUTTERFREE_FROST' \
+            source/include/constants/species.h || true
+
+          echo ""
+          echo "=== Patch contents ==="
+          unzip -l "$GITHUB_WORKSPACE/HnS_2.0_Custom_Pokemon_Source_Patch.zip"
+
       - name: Install GBA compiler
         run: |
           sudo apt-get update
