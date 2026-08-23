@@ -1,0 +1,38 @@
+name: Build Heart & Soul Yanma
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download Heart & Soul 2.0.0
+        run: |
+          curl -L --fail -o source.zip https://github.com/PokemonHnS-Development/pokehns-expansion/archive/refs/tags/Release-v2.0.0.zip
+          unzip -q source.zip
+          mv pokehns-expansion-Release-v2.0.0 source
+
+      - name: Apply our custom patch
+        run: |
+          unzip -q HnS_2.0_Custom_Pokemon_Source_Patch.zip -d source
+          echo "Custom patch applied."
+          unzip -l HnS_2.0_Custom_Pokemon_Source_Patch.zip
+
+      - name: Install GBA compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y binutils-arm-none-eabi gcc-arm-none-eabi libnewlib-arm-none-eabi libpng-dev python3
+
+      - name: Build Heart & Soul
+        working-directory: source
+        env:
+          GAME_VERSION: POKEMON_HNS
+        run: make hns release -j$(nproc) -O
+
+      - name: Upload ROM
+        uses: actions/upload-artifact@v4
+        with:
+          name: HeartAndSoulYanma
+          path: source/pokehns-release.gba 
